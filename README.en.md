@@ -49,7 +49,7 @@ Energy polling and the voltage/current/power reporting interval can also be conf
 
 Join the SmartThings Edge channel using this invitation link:
 
-<https://bestow-regional.api.smartthings.com/invite/Y7236AZwknMr>
+<https://bestow-regional.api.smartthings.com/invite/Boj0wXyx8qlA>
 
 After joining the channel:
 

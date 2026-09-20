@@ -49,7 +49,7 @@ SmartThings Edge 지그비 Tuya 플러그 보강 드라이버
 
 아래 초대 링크로 SmartThings Edge 채널에 참여합니다.
 
-<https://bestow-regional.api.smartthings.com/invite/Y7236AZwknMr>
+<https://bestow-regional.api.smartthings.com/invite/Boj0wXyx8qlA>
 
 채널 참여 후:
 
