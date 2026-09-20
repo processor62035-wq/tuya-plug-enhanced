@@ -29,7 +29,8 @@ The source and change summary are also recorded in `NOTICE.md`.
 - Fixed-voltage fallback when no voltage sensor is available
 - Current fallback: `power / voltage`
 - Power fallback: `voltage * current`
-- Immediate voltage alarm based on the normal-voltage average (±5% or ±10%)
+- Immediate voltage alarm based on the normal-voltage average (±5% or ±10%, default ±10%)
+- Automatic switch-off at ±15% for 15 seconds, or immediately at ±20%
 
 Fallback values are calculated values, not direct sensor readings.
 
@@ -50,12 +51,16 @@ Energy polling and the voltage/current/power reporting interval can also be conf
 ## Immediate Voltage Alarm
 
 Enable `전압 이상 즉시 경보` in the device settings and choose `±5%` or `±10%`
-of the normal-voltage average. The first normal reading establishes the baseline,
+of the normal-voltage average; the default is ±10%. The first normal reading establishes the baseline,
 and only normal readings update the average. When a reading leaves the selected
 range, the driver emits the standard SmartThings `alarm` state immediately; it
 does not wait for one minute. The alarm clears automatically when voltage returns
 to the normal range, and the `alarm` capability can be used in SmartThings
 automation conditions for notifications.
+
+When `전압 이상 자동 차단` is enabled, the switch turns off after ±15% deviation
+continues for 15 seconds, or immediately at ±20%. The driver emits the alarm state
+once more immediately before either shutoff.
 
 ## SmartThings Installation
 

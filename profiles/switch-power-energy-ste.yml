@@ -111,7 +111,14 @@ preferences:
       options:
         "5": "평균값의 ±5%"
         "10": "평균값의 ±10%"
-      default: "5"
+      default: "10"
+  - name: voltageAutoOffEnabled
+    title: "전압 이상 자동 차단"
+    description: "평균값 대비 ±15% 이상이 15초 지속되면 차단하고, ±20% 이상이면 즉시 차단합니다."
+    required: true
+    preferenceType: boolean
+    definition:
+      default: true
 metadata:
   mnmn: SmartThingsEdge
   vid: STES-1-Dawon-Zigbee_Smart_Plug
