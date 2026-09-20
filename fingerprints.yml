@@ -7,3 +7,8 @@ zigbeeManufacturer:
     deviceLabel: "Tuya Plug"
     model: TS0121
     deviceProfileName: switch-power-energy-ste
+  - id: "DAWON_DNS/PM-B540-ZB"
+    deviceLabel: "DAWON Power Manager Plug"
+    manufacturer: DAWON_DNS
+    model: PM-B540-ZB
+    deviceProfileName: switch-power-energy-ste
