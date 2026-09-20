@@ -154,3 +154,27 @@ deviceConfig:
     - component: main
       capability: refresh
       version: 1
+  automation:
+    conditions:
+      - component: main
+        capability: switch
+        version: 1
+      - component: main
+        capability: powerMeter
+        version: 1
+      - component: main
+        capability: voltageMeasurement
+        version: 1
+      - component: main
+        capability: currentMeasurement
+        version: 1
+      - component: main
+        capability: energyMeter
+        version: 1
+      - component: main
+        capability: powerConsumptionReport
+        version: 1
+    actions:
+      - component: main
+        capability: switch
+        version: 1
