@@ -16,6 +16,8 @@ components:
         version: 1
       - id: refresh
         version: 1
+      - id: alarm
+        version: 1
     categories:
       - name: SmartPlug
 preferences:
@@ -93,6 +95,23 @@ preferences:
         "220": "220V"
         "230": "230V"
       default: auto
+  - name: voltageAlarmEnabled
+    title: "전압 이상 즉시 경보"
+    description: "전압이 평균 기준을 벗어나면 지속 시간과 관계없이 즉시 경보 상태를 발생시킵니다."
+    required: true
+    preferenceType: boolean
+    definition:
+      default: true
+  - name: voltageAlarmTolerance
+    title: "전압 경보 허용 범위"
+    description: "최근 정상 전압 평균값을 기준으로 허용할 범위입니다."
+    required: true
+    preferenceType: enumeration
+    definition:
+      options:
+        "5": "평균값의 ±5%"
+        "10": "평균값의 ±10%"
+      default: "5"
 metadata:
   mnmn: SmartThingsEdge
   vid: STES-1-Dawon-Zigbee_Smart_Plug
@@ -125,6 +144,11 @@ deviceConfig:
         values:
           - label: " | {{current.value}} A"
         composite: true
+      - component: main
+        capability: alarm
+        version: 1
+        group: main
+        composite: true
     actions:
       - component: main
         capability: switch
@@ -154,6 +178,9 @@ deviceConfig:
     - component: main
       capability: refresh
       version: 1
+    - component: main
+      capability: alarm
+      version: 1
   automation:
     conditions:
       - component: main
@@ -173,6 +200,9 @@ deviceConfig:
         version: 1
       - component: main
         capability: powerConsumptionReport
+        version: 1
+      - component: main
+        capability: alarm
         version: 1
     actions:
       - component: main

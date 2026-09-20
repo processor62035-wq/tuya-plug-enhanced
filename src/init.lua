@@ -65,6 +65,35 @@ local function effective_voltage(device)
   return voltage
 end
 
+local function evaluate_voltage_alarm(device, voltage)
+  if device.preferences.voltageAlarmEnabled == false then
+    if device:get_field("voltage_alarm_active") then
+      device:emit_event(capabilities.alarm.alarm.off())
+      device:set_field("voltage_alarm_active", false)
+    end
+    device:set_field("voltage_average", nil)
+    return
+  end
+  local average = device:get_field("voltage_average")
+  if average == nil or average <= 0 then
+    device:set_field("voltage_average", voltage, {persist = true})
+    return
+  end
+  local tolerance = tonumber(device.preferences.voltageAlarmTolerance) or 5
+  local out_of_range = voltage < average * (1 - tolerance / 100) or voltage > average * (1 + tolerance / 100)
+  local active = device:get_field("voltage_alarm_active") == true
+  if out_of_range and not active then
+    device:emit_event(capabilities.alarm.alarm.siren())
+    device:set_field("voltage_alarm_active", true, {persist = true})
+  elseif not out_of_range and active then
+    device:emit_event(capabilities.alarm.alarm.off())
+    device:set_field("voltage_alarm_active", false, {persist = true})
+  end
+  if not out_of_range then
+    device:set_field("voltage_average", average * 0.9 + voltage * 0.1, {persist = true})
+  end
+end
+
 local function emit_fallbacks(device)
   local voltage = effective_voltage(device)
   if device.preferences.voltageMode == "fixed" or not device:get_field("voltage_seen") or (device:get_field("last_voltage") or 0) < 100 then
@@ -94,6 +123,7 @@ local function voltage_handler(driver, device, value)
   device:set_field("voltage_seen", true)
   device:set_field("last_voltage", voltage)
   device:emit_event(capabilities.voltageMeasurement.voltage({value = voltage, unit = "V"}))
+  evaluate_voltage_alarm(device, voltage)
   emit_fallbacks(device)
 end
 
@@ -319,6 +349,12 @@ local function device_info_changed(driver, device, event, args)
     args.old_st_store.preferences.voltagePreset ~= device.preferences.voltagePreset then
     emit_fallbacks(device)
   end
+  if args.old_st_store.preferences.voltageAlarmEnabled ~= device.preferences.voltageAlarmEnabled or
+    args.old_st_store.preferences.voltageAlarmTolerance ~= device.preferences.voltageAlarmTolerance then
+    device:set_field("voltage_average", nil)
+    device:set_field("voltage_alarm_active", false)
+    emit_fallbacks(device)
+  end
 end
 
 
@@ -334,6 +370,7 @@ local tuya_plug = {
     capabilities.energyMeter,
     capabilities.powerConsumptionReport,
     capabilities.refresh,
+    capabilities.alarm,
   },
   zigbee_handlers = {
     attr = {
@@ -366,7 +403,19 @@ local tuya_plug = {
     doConfigure = do_configure,
     infoChanged = device_info_changed,
   },
-  health_check = false
+  health_check = false,
+  capability_handlers = {
+    [capabilities.alarm.ID] = {
+      [capabilities.alarm.commands.off.NAME] = function(driver, device)
+        device:emit_event(capabilities.alarm.alarm.off())
+        device:set_field("voltage_alarm_active", false, {persist = true})
+      end,
+      [capabilities.alarm.commands.siren.NAME] = function(driver, device)
+        device:emit_event(capabilities.alarm.alarm.siren())
+        device:set_field("voltage_alarm_active", true, {persist = true})
+      end,
+    },
+  }
 }
 
 defaults.register_for_default_handlers(tuya_plug, tuya_plug.supported_capabilities, {native_capability_cmds_enabled = true})
