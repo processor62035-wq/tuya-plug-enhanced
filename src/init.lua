@@ -48,19 +48,26 @@ local function power_refresh(device)
 end
 
 local function configured_voltage(device)
-  return tonumber(device.preferences.fixedVoltage) or 230
+  local preset = device.preferences.voltagePreset or "auto"
+  if preset == "100" then return 100 end
+  if preset == "110" then return 110 end
+  if preset == "220" then return 220 end
+  if preset == "230" then return 230 end
+  return 220
 end
 
 local function effective_voltage(device)
   if device.preferences.voltageMode == "fixed" then
     return configured_voltage(device)
   end
-  return device:get_field("last_voltage") or configured_voltage(device)
+  local voltage = device:get_field("last_voltage")
+  if voltage == nil or voltage < 100 then return configured_voltage(device) end
+  return voltage
 end
 
 local function emit_fallbacks(device)
   local voltage = effective_voltage(device)
-  if device.preferences.voltageMode == "fixed" or not device:get_field("voltage_seen") then
+  if device.preferences.voltageMode == "fixed" or not device:get_field("voltage_seen") or (device:get_field("last_voltage") or 0) < 100 then
     device:emit_event(capabilities.voltageMeasurement.voltage({value = voltage, unit = "V"}))
   end
   local power = device:get_field("last_power")
@@ -114,7 +121,12 @@ local function active_power_handler(driver, device, value)
 end
 
 local function instantaneous_power_handler(driver, device, value)
-  local power = scale_electrical(device, value, "meter_multiplier", "meter_divisor", 100)
+  local divisor = device:get_field("meter_divisor") or 100
+  if device:get_manufacturer() == "DAWON_DNS" and device:get_model() == "PM-B540-ZB" then
+    -- This model reports InstantaneousDemand directly in watts.
+    divisor = 1
+  end
+  local power = value.value * (device:get_field("meter_multiplier") or 1) / divisor
   if power == 0 and (device:get_field("last_power") or 0) > 0 then
     return
   end
@@ -304,7 +316,7 @@ local function device_info_changed(driver, device, event, args)
     do_configure(driver, device)
   end
   if args.old_st_store.preferences.voltageMode ~= device.preferences.voltageMode or
-    args.old_st_store.preferences.fixedVoltage ~= device.preferences.fixedVoltage then
+    args.old_st_store.preferences.voltagePreset ~= device.preferences.voltagePreset then
     emit_fallbacks(device)
   end
 end
