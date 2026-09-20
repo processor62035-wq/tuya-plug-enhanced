@@ -80,15 +80,19 @@ preferences:
         auto: "센서 우선, 없으면 고정값"
         fixed: "고정값 사용"
       default: auto
-  - name: fixedVoltage
-    title: "고정 전압"
-    description: "전압 센서가 없을 때 전류·전력 계산에 사용할 전압입니다."
+  - name: voltagePreset
+    title: "고정 전압 선택"
+    description: "전압 센서가 없을 때 사용할 전압입니다. 자동은 한국 기본값 220V를 사용합니다."
     required: true
-    preferenceType: number
+    preferenceType: enumeration
     definition:
-      minimum: 100
-      maximum: 300
-      default: 230
+      options:
+        auto: "자동 (한국 기본값 220V)"
+        "100": "100V"
+        "110": "110V"
+        "220": "220V"
+        "230": "230V"
+      default: auto
 metadata:
   mnmn: SmartThingsEdge
   vid: STES-1-Dawon-Zigbee_Smart_Plug
@@ -119,7 +123,7 @@ deviceConfig:
         version: 1
         group: main
         values:
-          - label: " | {{current.value}} {{current.unit}}"
+          - label: " | {{current.value}} A"
         composite: true
     actions:
       - component: main
