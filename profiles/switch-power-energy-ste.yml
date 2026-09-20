@@ -1,0 +1,94 @@
+name: switch-power-energy-ste
+components:
+  - id: main
+    capabilities:
+      - id: switch
+        version: 1
+      - id: powerMeter
+        version: 1
+      - id: voltageMeasurement
+        version: 1
+      - id: currentMeasurement
+        version: 1
+      - id: energyMeter
+        version: 1
+      - id: powerConsumptionReport
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: SmartPlug
+preferences:
+  - name: powerPolling
+    title: "전력 자동 조회"
+    description: "전력값을 주기적으로 조회합니다."
+    required: true
+    preferenceType: enumeration
+    definition:
+      options:
+        p0: "자동 (기본값)"
+        p1: "전력 조회 강제 사용"
+        p2: "전력 조회 사용안함"
+      default: p0
+  - name: energyPolling
+    title: "에너지 소비 강제 조회"
+    description: "누적 에너지값을 5분마다 조회합니다."
+    required: true
+    preferenceType: boolean
+    definition:
+      default: false
+  - name: powerPollingMode
+    title: "전력 갱신 주기"
+    description: "전력값 자동 조회 주기를 선택합니다."
+    required: true
+    preferenceType: enumeration
+    definition:
+      options:
+        variable_5_15: "가변 (5~15초)"
+        variable_5_30: "가변 (5~30초)"
+        fixed_10: "10초, 고정"
+        fixed_30: "30초, 고정"
+        fixed_60: "60초, 고정"
+        fixed_300: "300초, 고정"
+        manual: "수동 갱신"
+      default: variable_5_15
+  - name: energyPollingInterval
+    title: "에너지 폴링 주기 (초)"
+    description: "누적 에너지값을 읽는 주기입니다. 기본값 60초."
+    required: true
+    preferenceType: integer
+    definition:
+      minimum: 10
+      maximum: 600
+      default: 60
+  - name: electricalReportInterval
+    title: "전압·전류·전력 보고 주기 (초)"
+    description: "장치에 전압·전류·전력 보고 주기를 요청합니다. 기본값 5초."
+    required: true
+    preferenceType: integer
+    definition:
+      minimum: 1
+      maximum: 60
+      default: 5
+  - name: voltageMode
+    title: "전압값 방식"
+    description: "전압 센서값을 사용하거나 고정 전압을 사용합니다."
+    required: true
+    preferenceType: enumeration
+    definition:
+      options:
+        auto: "센서 우선, 없으면 고정값"
+        fixed: "고정값 사용"
+      default: auto
+  - name: fixedVoltage
+    title: "고정 전압"
+    description: "전압 센서가 없을 때 전류·전력 계산에 사용할 전압입니다."
+    required: true
+    preferenceType: number
+    definition:
+      minimum: 100
+      maximum: 300
+      default: 230
+metadata:
+  mnmn: SmartThingsEdge
+  vid: STES-1-Dawon-Zigbee_Smart_Plug
