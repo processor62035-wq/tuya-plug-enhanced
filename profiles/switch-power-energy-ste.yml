@@ -163,6 +163,13 @@ deviceConfig:
         values:
           - label: " | {{current.value}} A"
         composite: true
+      - component: main
+        capability: energyMeter
+        version: 1
+        group: main
+        values:
+          - label: " | {{energy.value}} {{energy.unit}}"
+        composite: true
     actions:
       - component: main
         capability: switch
@@ -191,9 +198,6 @@ deviceConfig:
       version: 1
     - component: main
       capability: refresh
-      version: 1
-    - component: main
-      capability: alarm
       version: 1
   automation:
     conditions:
