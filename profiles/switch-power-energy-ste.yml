@@ -147,7 +147,7 @@ deviceConfig:
         version: 1
         group: main
         values:
-          - label: " | {{power.value}} {{power.unit}}"
+          - label: " | {{power.value}} W"
         composite: true
       - component: main
         capability: voltageMeasurement
