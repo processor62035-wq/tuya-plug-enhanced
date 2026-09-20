@@ -92,3 +92,61 @@ preferences:
 metadata:
   mnmn: SmartThingsEdge
   vid: STES-1-Dawon-Zigbee_Smart_Plug
+deviceConfig:
+  dashboard:
+    states:
+      - component: main
+        capability: switch
+        version: 1
+        group: main
+        composite: true
+      - component: main
+        capability: powerMeter
+        version: 1
+        group: main
+        values:
+          - label: " | {{power.value}} {{power.unit}}"
+        composite: true
+      - component: main
+        capability: voltageMeasurement
+        version: 1
+        group: main
+        values:
+          - label: " | {{voltage.value}} {{voltage.unit}}"
+        composite: true
+      - component: main
+        capability: currentMeasurement
+        version: 1
+        group: main
+        values:
+          - label: " | {{current.value}} {{current.unit}}"
+        composite: true
+    actions:
+      - component: main
+        capability: switch
+        version: 1
+        group: main
+        composite: true
+    basicPlus: []
+  detailView:
+    - component: main
+      capability: switch
+      version: 1
+    - component: main
+      capability: powerMeter
+      version: 1
+    - component: main
+      capability: voltageMeasurement
+      version: 1
+    - component: main
+      capability: currentMeasurement
+      version: 1
+    - component: main
+      capability: energyMeter
+      version: 1
+    - component: main
+      capability: powerConsumptionReport
+      version: 1
+    - component: main
+      capability: refresh
+      version: 1

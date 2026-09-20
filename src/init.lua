@@ -81,6 +81,9 @@ end
 
 local function voltage_handler(driver, device, value)
   local voltage = scale_electrical(device, value, "voltage_multiplier", "voltage_divisor", 10)
+  if device.preferences.voltageMode ~= "fixed" and value.value >= 100 and voltage < 100 then
+    voltage = value.value * (device:get_field("voltage_multiplier") or 1)
+  end
   device:set_field("voltage_seen", true)
   device:set_field("last_voltage", voltage)
   device:emit_event(capabilities.voltageMeasurement.voltage({value = voltage, unit = "V"}))
@@ -89,6 +92,11 @@ end
 
 local function current_handler(driver, device, value)
   local current = scale_electrical(device, value, "current_multiplier", "current_divisor", 1000)
+  if current == 0 and (device:get_field("last_power") or 0) > 0 then
+    device:set_field("current_seen", nil)
+    emit_fallbacks(device)
+    return
+  end
   device:set_field("current_seen", true)
   device:set_field("last_current", current)
   device:emit_event(capabilities.currentMeasurement.current({value = current, unit = "A"}))
@@ -97,6 +105,19 @@ end
 
 local function active_power_handler(driver, device, value)
   local power = scale_electrical(device, value, "power_multiplier", "power_divisor", 1)
+  if power == 0 and (device:get_field("last_power") or 0) > 0 then
+    return
+  end
+  device:set_field("last_power", power)
+  device:emit_event(capabilities.powerMeter.power({value = power, unit = "W"}))
+  emit_fallbacks(device)
+end
+
+local function instantaneous_power_handler(driver, device, value)
+  local power = scale_electrical(device, value, "meter_multiplier", "meter_divisor", 100)
+  if power == 0 and (device:get_field("last_power") or 0) > 0 then
+    return
+  end
   device:set_field("last_power", power)
   device:emit_event(capabilities.powerMeter.power({value = power, unit = "W"}))
   emit_fallbacks(device)
@@ -308,7 +329,8 @@ local tuya_plug = {
         [Basic.attributes.ApplicationVersion.ID] = application_version_attr_handler
       },
       [SimpleMetering.ID] = {
-        [SimpleMetering.attributes.CurrentSummationDelivered.ID] = energy_meter_handler
+        [SimpleMetering.attributes.CurrentSummationDelivered.ID] = energy_meter_handler,
+        [SimpleMetering.attributes.InstantaneousDemand.ID] = instantaneous_power_handler,
       },
       [ElectricalMeasurement.ID] = {
         [ElectricalMeasurement.attributes.RMSVoltage.ID] = voltage_handler,
