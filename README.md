@@ -22,6 +22,19 @@ SmartThings Edge Zigbee driver fork based on [`iquix/ST-Edge-Driver/tuya-plug`](
 - Tuya `TS011F`
 - Tuya `TS0121`
 
+## SmartThings Installation
+
+Join the SmartThings Edge driver channel with this invitation link:
+
+<https://bestow-regional.api.smartthings.com/invite/Y7236AZwknMr>
+
+After joining the channel:
+
+1. Install `Tuya Plug Enhanced by iquix` on the SmartThings hub.
+2. Open the Tuya plug device in the SmartThings app.
+3. Change the device driver to `Tuya Plug Enhanced by iquix`.
+4. Configure the refresh mode and measurement fallback settings.
+
 ## License and attribution
 
 The original driver is copyright 2022–2024 Jaewon Park (iquix) and is licensed under Apache-2.0.
