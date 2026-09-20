@@ -163,11 +163,6 @@ deviceConfig:
         values:
           - label: " | {{current.value}} A"
         composite: true
-      - component: main
-        capability: alarm
-        version: 1
-        group: main
-        composite: true
     actions:
       - component: main
         capability: switch
