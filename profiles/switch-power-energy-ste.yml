@@ -112,6 +112,18 @@ preferences:
         "5": "평균값의 ±5%"
         "10": "평균값의 ±10%"
       default: "10"
+  - name: voltageAlarmMode
+    title: "전압 이상 알람 방식"
+    description: "설정 범위를 벗어났을 때 사용할 알람 방식입니다. 자동 차단 직전에는 사이렌이 우선합니다."
+    required: true
+    preferenceType: enumeration
+    definition:
+      options:
+        off: "꺼짐"
+        strobe: "스트로브"
+        both: "사이렌 및 스트로브"
+        siren: "사이렌"
+      default: strobe
   - name: voltageAutoOffEnabled
     title: "전압 이상 자동 차단"
     description: "평균값 대비 ±15% 이상이 15초 지속되면 차단하고, ±20% 이상이면 즉시 차단합니다."

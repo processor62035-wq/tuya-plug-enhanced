@@ -74,6 +74,19 @@ local function cancel_auto_off(device)
   end
 end
 
+local function emit_voltage_alarm(device)
+  local mode = device.preferences.voltageAlarmMode or "strobe"
+  if mode == "off" then
+    device:emit_event(capabilities.alarm.alarm.off())
+  elseif mode == "siren" then
+    device:emit_event(capabilities.alarm.alarm.siren())
+  elseif mode == "both" then
+    device:emit_event(capabilities.alarm.alarm.both())
+  else
+    device:emit_event(capabilities.alarm.alarm.strobe())
+  end
+end
+
 local function switch_off_for_voltage(device)
   cancel_auto_off(device)
   -- 차단 직전에 경보 상태를 다시 전환해 자동화 알림을 확실히 발생시킵니다.
@@ -126,7 +139,7 @@ local function evaluate_voltage_alarm(device, voltage)
   local out_of_range = voltage < average * (1 - tolerance / 100) or voltage > average * (1 + tolerance / 100)
   local active = device:get_field("voltage_alarm_active") == true
   if out_of_range and not active then
-    device:emit_event(capabilities.alarm.alarm.siren())
+    emit_voltage_alarm(device)
     device:set_field("voltage_alarm_active", true, {persist = true})
   elseif not out_of_range and active then
     device:emit_event(capabilities.alarm.alarm.off())
@@ -394,7 +407,8 @@ local function device_info_changed(driver, device, event, args)
     emit_fallbacks(device)
   end
   if args.old_st_store.preferences.voltageAlarmEnabled ~= device.preferences.voltageAlarmEnabled or
-    args.old_st_store.preferences.voltageAlarmTolerance ~= device.preferences.voltageAlarmTolerance then
+    args.old_st_store.preferences.voltageAlarmTolerance ~= device.preferences.voltageAlarmTolerance or
+    args.old_st_store.preferences.voltageAlarmMode ~= device.preferences.voltageAlarmMode then
     device:set_field("voltage_average", nil)
     device:set_field("voltage_alarm_active", false)
     emit_fallbacks(device)
