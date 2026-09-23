@@ -18,6 +18,7 @@ The source and change summary are also recorded in `NOTICE.md`.
 ## Supported Devices
 
 - Tuya `TS011F`
+- Tuya `_TZ3000_bppxj3sf` `TS011F` four-socket plus USB strip
 - Tuya `TS0121`
 - DAWON DNS `PM-B540-ZB`
 
@@ -32,6 +33,12 @@ The source and change summary are also recorded in `NOTICE.md`.
 - Immediate voltage alarm based on the normal-voltage average (±5% or ±10%, default ±10%)
 - Automatic switch-off at ±15% for 15 seconds, or immediately at ±20%
 - Selectable alarm mode: off, strobe, siren and strobe+siren
+- Individual child switches for outlets 2–4 and the USB group on the identified `_TZ3000_bppxj3sf` strip
+- The strip-only `masterSwitchControlsAll` setting makes the parent switch control outlets 1–4 and the USB group. It defaults to off, preserving outlet 1-only parent control.
+
+With whole-strip control enabled, the parent switch state is aggregated from endpoint reports 1–5. Any reported on endpoint makes it on; it becomes off only after all five endpoints report off. An endpoint with no report is not treated as off. Available device information and hub records establish the individual-endpoint structure, but whole-strip control has not been tested on the hardware.
+
+For this strip, voltage auto-off turns off endpoints 1–5 regardless of the parent-switch setting. Power and energy polling also continues when endpoint 1 is off, because another outlet or the USB group may still be on.
 
 Fallback values are calculated values, not direct sensor readings.
 

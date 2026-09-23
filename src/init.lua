@@ -14,6 +14,7 @@
 -- limitations under the License.
 
 local capabilities = require "st.capabilities"
+local st_device = require "st.device"
 local zcl_clusters = require "st.zigbee.zcl.clusters"
 local zcl_types = require "st.zigbee.zcl.types"
 local ZigbeeDriver = require "st.zigbee"
@@ -27,6 +28,11 @@ local Basic = zcl_clusters.Basic
 local OnOff = zcl_clusters.OnOff
 local SimpleMetering = zcl_clusters.SimpleMetering
 local ElectricalMeasurement = zcl_clusters.ElectricalMeasurement
+local STRIP_MANUFACTURER = "_TZ3000_bppxj3sf"
+local STRIP_MODEL = "TS011F"
+local STRIP_STATE_FIELD = "tuya_4socket_usb_endpoint_states"
+local STRIP_ENDPOINTS = {1, 2, 3, 4, 5}
+local STRIP_CHILD_ENDPOINTS = {2, 3, 4, 5}
 
 local POWER_POLLING_TIMER = "tuya_plug_power_polling_timer"
 local ENERGY_POLLING_TIMER = "tuya_plug_energy_polling_timer"
@@ -37,10 +43,137 @@ local REPORTING_DISABLED = 0xFFFF
 
 ---------------------------------------------------------------
 
+local function is_child_device(device)
+  return device.network_type == st_device.NETWORK_TYPE_CHILD
+end
+
+local function parent_device(device)
+  if is_child_device(device) then
+    return device:get_parent_device()
+  end
+  return device
+end
+
+local function is_four_socket_usb(device)
+  local parent = parent_device(device)
+  return parent ~= nil and parent:get_manufacturer() == STRIP_MANUFACTURER and parent:get_model() == STRIP_MODEL
+end
+
+local function master_controls_all(device)
+  return is_four_socket_usb(device) and device.preferences.masterSwitchControlsAll == true
+end
+
+local function find_child(parent, endpoint)
+  return parent:get_child_by_parent_assigned_key(string.format("%02X", endpoint))
+end
+
+local function endpoint_has_onoff(endpoint)
+  for _, cluster_id in ipairs(endpoint.server_clusters or {}) do
+    if type(cluster_id) == "table" then
+      cluster_id = cluster_id.id or cluster_id.value
+    end
+    if tonumber(cluster_id) == OnOff.ID then
+      return true
+    end
+  end
+  return false
+end
+
+local function has_onoff_endpoint(device, endpoint_id)
+  for _, endpoint in pairs(device.zigbee_endpoints or {}) do
+    if tonumber(endpoint.id) == endpoint_id and endpoint_has_onoff(endpoint) then
+      return true
+    end
+  end
+  return false
+end
+
+local function create_strip_children(driver, device)
+  if not is_four_socket_usb(device) or is_child_device(device) then return end
+  for _, endpoint in ipairs(STRIP_CHILD_ENDPOINTS) do
+    if has_onoff_endpoint(device, endpoint) and find_child(device, endpoint) == nil then
+      local label = endpoint == 5 and "멀티탭 usb" or string.format("멀티탭 %d", endpoint)
+      driver:try_create_device({
+        type = "EDGE_CHILD",
+        parent_assigned_child_key = string.format("%02X", endpoint),
+        label = label,
+        profile = "child-switch",
+        parent_device_id = device.id,
+        manufacturer = device:get_manufacturer(),
+        model = device:get_model()
+      })
+    end
+  end
+end
+
+local function emit_switch_state(device, endpoint, is_on)
+  if endpoint == 1 or find_child(device, endpoint) ~= nil then
+    device:emit_event_for_endpoint(endpoint, capabilities.switch.switch(is_on and "on" or "off"))
+  end
+end
+
+local function update_master_switch_state(device)
+  if not master_controls_all(device) then return end
+  local states = device:get_field(STRIP_STATE_FIELD) or {}
+  for _, endpoint in ipairs(STRIP_ENDPOINTS) do
+    if states[endpoint] == true then
+      device:emit_event(capabilities.switch.switch.on())
+      return
+    end
+  end
+  for _, endpoint in ipairs(STRIP_ENDPOINTS) do
+    if states[endpoint] == nil then
+      return
+    end
+  end
+  device:emit_event(capabilities.switch.switch.off())
+end
+
+local function request_strip_switch_states(device)
+  if not master_controls_all(device) then return end
+  device:set_field(STRIP_STATE_FIELD, {})
+  for _, endpoint in ipairs(STRIP_ENDPOINTS) do
+    device:send(OnOff.attributes.OnOff:read(device):to_endpoint(endpoint))
+  end
+end
+
+local function send_switch_command(device, is_on, force_all_endpoints)
+  local parent = parent_device(device)
+  if parent == nil then return end
+  local command = is_on and OnOff.server.commands.On(parent) or OnOff.server.commands.Off(parent)
+  if is_child_device(device) then
+    local child_key = device.parent_assigned_child_key
+    local endpoint = type(child_key) == "string" and tonumber(child_key, 16) or tonumber(child_key)
+    endpoint = endpoint or device:get_endpoint()
+    if endpoint and endpoint >= 2 and endpoint <= 5 then
+      parent:send(command:to_endpoint(endpoint))
+    end
+    return
+  end
+  local endpoints = (force_all_endpoints or master_controls_all(parent)) and STRIP_ENDPOINTS or {1}
+  for _, endpoint in ipairs(endpoints) do
+    parent:send(command:to_endpoint(endpoint))
+  end
+end
+
+local function configure_strip_child_endpoints(device)
+  if not is_four_socket_usb(device) then return end
+  local onoff_config = device_management.attr_config(device, switch_defaults.default_on_off_configuration)
+  for _, endpoint in ipairs(STRIP_CHILD_ENDPOINTS) do
+    if has_onoff_endpoint(device, endpoint) then
+      local bind = device_management.build_bind_request(device, OnOff.ID, device.driver.environment_info.hub_zigbee_eui, endpoint)
+      device:send(bind:to_endpoint(endpoint))
+      device:send(onoff_config:to_endpoint(endpoint))
+      device:send(OnOff.attributes.OnOff:read(device):to_endpoint(endpoint))
+    end
+  end
+end
+
 
 local function power_refresh(device)
   log.debug("** power_refresh()")
-  if (device:get_latest_state("main", capabilities.switch.ID, capabilities.switch.switch.NAME) ~= "off") then
+  if is_child_device(device) then return end
+  if is_four_socket_usb(device) or (device:get_latest_state("main", capabilities.switch.ID, capabilities.switch.switch.NAME) ~= "off") then
     device:send(SimpleMetering.attributes.InstantaneousDemand:read(device))
     device:send(ElectricalMeasurement.attributes.ActivePower:read(device))
     device:send(ElectricalMeasurement.attributes.RMSVoltage:read(device))
@@ -92,7 +225,11 @@ local function switch_off_for_voltage(device)
   -- 차단 직전에 경보 상태를 다시 전환해 자동화 알림을 확실히 발생시킵니다.
   device:emit_event(capabilities.alarm.alarm.off())
   device:emit_event(capabilities.alarm.alarm.siren())
-  device:send(OnOff.server.commands.Off(device))
+  if is_four_socket_usb(device) then
+    send_switch_command(device, false, true)
+  else
+    device:send(OnOff.server.commands.Off(device))
+  end
 end
 
 local function evaluate_voltage_auto_off(device, voltage, average)
@@ -106,9 +243,9 @@ local function evaluate_voltage_auto_off(device, voltage, average)
   elseif deviation >= 0.15 then
     if device:get_field(AUTO_OFF_TIMER) == nil then
       local timer = device.thread:call_with_delay(15, function()
-        local latest = device:get_latest_state("main", capabilities.voltageMeasurement.ID, capabilities.voltageMeasurement.voltage.NAME)
+        local latest = device:get_field("last_voltage")
         local current_average = device:get_field("voltage_average")
-        if latest and current_average and math.abs(latest - current_average) / current_average >= 0.15 then
+        if device.preferences.voltageAutoOffEnabled ~= false and latest and current_average and current_average > 0 and math.abs(latest - current_average) / current_average >= 0.15 then
           switch_off_for_voltage(device)
         else
           cancel_auto_off(device)
@@ -122,28 +259,34 @@ local function evaluate_voltage_auto_off(device, voltage, average)
 end
 
 local function evaluate_voltage_alarm(device, voltage)
-  if device.preferences.voltageAlarmEnabled == false then
-    if device:get_field("voltage_alarm_active") then
-      device:emit_event(capabilities.alarm.alarm.off())
-      device:set_field("voltage_alarm_active", false)
-    end
+  local alarm_enabled = device.preferences.voltageAlarmEnabled ~= false
+  local auto_off_enabled = device.preferences.voltageAutoOffEnabled ~= false
+  if not alarm_enabled and device:get_field("voltage_alarm_active") then
+    device:emit_event(capabilities.alarm.alarm.off())
+    device:set_field("voltage_alarm_active", false)
+  end
+  if not alarm_enabled and not auto_off_enabled then
     device:set_field("voltage_average", nil)
+    cancel_auto_off(device)
     return
   end
   local average = device:get_field("voltage_average")
   if average == nil or average <= 0 then
     device:set_field("voltage_average", voltage, {persist = true})
+    evaluate_voltage_auto_off(device, voltage, voltage)
     return
   end
   local tolerance = tonumber(device.preferences.voltageAlarmTolerance) or 5
   local out_of_range = voltage < average * (1 - tolerance / 100) or voltage > average * (1 + tolerance / 100)
   local active = device:get_field("voltage_alarm_active") == true
-  if out_of_range and not active then
-    emit_voltage_alarm(device)
-    device:set_field("voltage_alarm_active", true, {persist = true})
-  elseif not out_of_range and active then
-    device:emit_event(capabilities.alarm.alarm.off())
-    device:set_field("voltage_alarm_active", false, {persist = true})
+  if alarm_enabled then
+    if out_of_range and not active then
+      emit_voltage_alarm(device)
+      device:set_field("voltage_alarm_active", true, {persist = true})
+    elseif not out_of_range and active then
+      device:emit_event(capabilities.alarm.alarm.off())
+      device:set_field("voltage_alarm_active", false, {persist = true})
+    end
   end
   if not out_of_range then
     device:set_field("voltage_average", average * 0.9 + voltage * 0.1, {persist = true})
@@ -173,6 +316,7 @@ local function scale_electrical(device, value, multiplier_key, divisor_key, defa
 end
 
 local function voltage_handler(driver, device, value)
+  if is_child_device(device) then return end
   local voltage = scale_electrical(device, value, "voltage_multiplier", "voltage_divisor", 10)
   if device.preferences.voltageMode ~= "fixed" and value.value >= 100 and voltage < 100 then
     voltage = value.value * (device:get_field("voltage_multiplier") or 1)
@@ -185,6 +329,7 @@ local function voltage_handler(driver, device, value)
 end
 
 local function current_handler(driver, device, value)
+  if is_child_device(device) then return end
   local current = scale_electrical(device, value, "current_multiplier", "current_divisor", 1000)
   if current == 0 and (device:get_field("last_power") or 0) > 0 then
     device:set_field("current_seen", nil)
@@ -198,6 +343,7 @@ local function current_handler(driver, device, value)
 end
 
 local function active_power_handler(driver, device, value)
+  if is_child_device(device) then return end
   local power = scale_electrical(device, value, "power_multiplier", "power_divisor", 1)
   if power == 0 and (device:get_field("last_power") or 0) > 0 then
     return
@@ -208,6 +354,7 @@ local function active_power_handler(driver, device, value)
 end
 
 local function instantaneous_power_handler(driver, device, value)
+  if is_child_device(device) then return end
   local divisor = device:get_field("meter_divisor") or 100
   if device:get_manufacturer() == "DAWON_DNS" and device:get_model() == "PM-B540-ZB" then
     -- This model reports InstantaneousDemand directly in watts.
@@ -224,6 +371,7 @@ end
 
 local function save_electrical_scale(field, default)
   return function(driver, device, value)
+    if is_child_device(device) then return end
     local number = value.value
     if number == 0 then number = default end
     device:set_field(field, number, {persist = true})
@@ -232,12 +380,14 @@ end
 
 local function energy_refresh(device)
   log.debug("** energy_refresh()")
-  if (device:get_latest_state("main", capabilities.switch.ID, capabilities.switch.switch.NAME) ~= "off") then
+  if is_child_device(device) then return end
+  if is_four_socket_usb(device) or (device:get_latest_state("main", capabilities.switch.ID, capabilities.switch.switch.NAME) ~= "off") then
     device:send(SimpleMetering.attributes.CurrentSummationDelivered:read(device))
   end
 end
 
 local function is_polling(device) 
+  if is_child_device(device) then return false end
   local manufacturer = device:get_manufacturer()
   local model = device:get_model()
   local app_ver = device:get_field(APPLICATION_VERSION)
@@ -272,6 +422,7 @@ end
 
 local function setup_power_polling(device)
   log.debug("** setup_power_polling()")
+  if is_child_device(device) then return end
   local power_polling_timer = device:get_field(POWER_POLLING_TIMER)
   if power_polling_timer then
     log.debug("** unschedule power polling...")
@@ -288,6 +439,7 @@ end
 
 local function setup_energy_polling(device)
   log.debug("** setup_energy_polling()")
+  if is_child_device(device) then return end
   local energy_polling_timer = device:get_field(ENERGY_POLLING_TIMER)
   if energy_polling_timer then
     log.debug("** unschedule energy polling...")
@@ -309,6 +461,7 @@ end
 
 
 local function energy_meter_handler(driver, device, value, zb_rx)
+  if is_child_device(device) then return end
   local raw_value = value.value
   local multiplier = device:get_field(constants.SIMPLE_METERING_MULTIPLIER_KEY) or 1
   local divisor = device:get_field(constants.SIMPLE_METERING_DIVISOR_KEY) or 100
@@ -324,12 +477,33 @@ local function energy_meter_handler(driver, device, value, zb_rx)
 end
 
 local function application_version_attr_handler(driver, device, value, zb_rx)
+  if is_child_device(device) then return end
   local version = tonumber(value.value)
   device:set_field(APPLICATION_VERSION, version, {persist = true})
   setup_power_polling(device)
 end
 
 local function on_off_attr_handler(driver, device, value, zb_rx)
+  if is_child_device(device) then return end
+  if is_four_socket_usb(device) then
+    local endpoint = zb_rx.address_header.src_endpoint.value
+    if endpoint >= 1 and endpoint <= 5 then
+      local is_on = value.value == true or value.value == 1
+      local states = device:get_field(STRIP_STATE_FIELD) or {}
+      states[endpoint] = is_on
+      device:set_field(STRIP_STATE_FIELD, states)
+      if endpoint ~= 1 or not master_controls_all(device) then
+        emit_switch_state(device, endpoint, is_on)
+      end
+      update_master_switch_state(device)
+    end
+    if is_polling(device) then
+      device.thread:call_with_delay(5, function(d)
+        power_refresh(device)
+      end)
+    end
+    return
+  end
   if is_polling(device) then
     power_polling_timer = device.thread:call_with_delay(5, function(d)
       power_refresh(device)
@@ -338,17 +512,46 @@ local function on_off_attr_handler(driver, device, value, zb_rx)
   switch_defaults.on_off_attr_handler(driver, device, value, zb_rx)
 end
 
+local function switch_on(driver, device, command)
+  if is_four_socket_usb(device) then
+    send_switch_command(device, true)
+  else
+    switch_defaults.on(driver, device, command)
+  end
+end
+
+local function switch_off(driver, device, command)
+  if is_four_socket_usb(device) then
+    send_switch_command(device, false)
+  else
+    switch_defaults.off(driver, device, command)
+  end
+end
+
 ---------------------------------------------------------------------
 
 
 local function device_added(self, device)
   log.debug("** device_added()")
+  if is_child_device(device) then return end
   device:set_field(constants.SIMPLE_METERING_DIVISOR_KEY, 100, {persist = true})
+  if is_four_socket_usb(device) then
+    create_strip_children(self, device)
+    if not master_controls_all(device) and device:get_latest_state("main", capabilities.switch.ID, capabilities.switch.switch.NAME) ~= "on" then
+      device:emit_event(capabilities.switch.switch.off())
+    end
+    return
+  end
 end
 
 local function device_init(self, device)
   log.debug("** device_init()")
+  if is_child_device(device) then return end
   math.randomseed(os.time())
+  if is_four_socket_usb(device) then
+    device:set_find_child(find_child)
+    create_strip_children(self, device)
+  end
   
   local ver = device:get_field(APPLICATION_VERSION)
   if ver==nil or c==0 then
@@ -358,6 +561,9 @@ local function device_init(self, device)
     setup_power_polling(device)
   end
   setup_energy_polling(device)
+  if master_controls_all(device) then
+    request_strip_switch_states(device)
+  end
 
   -- Read Divisor and multipler for PowerMeter
   device:send(SimpleMetering.attributes.Divisor:read(device))
@@ -373,8 +579,10 @@ end
 
 local function do_configure(self, device)
   log.debug("** do_configure()")
+  if is_child_device(device) then return end
   device:configure()
   device:refresh()
+  configure_strip_child_endpoints(device)
   local _, report_interval = power_poll_bounds(device)
   report_interval = report_interval or REPORTING_DISABLED
   local energy_interval = tonumber(device.preferences.energyPollingInterval) or 60
@@ -386,6 +594,7 @@ end
 
 local function device_info_changed(driver, device, event, args)
   log.debug("** device_info_changed()")
+  if is_child_device(device) then return end
   if args.old_st_store.preferences.powerPolling ~= device.preferences.powerPolling then
     setup_power_polling(device)
   end
@@ -409,12 +618,28 @@ local function device_info_changed(driver, device, event, args)
   if args.old_st_store.preferences.voltageAlarmEnabled ~= device.preferences.voltageAlarmEnabled or
     args.old_st_store.preferences.voltageAlarmTolerance ~= device.preferences.voltageAlarmTolerance or
     args.old_st_store.preferences.voltageAlarmMode ~= device.preferences.voltageAlarmMode then
-    device:set_field("voltage_average", nil)
+    if device:get_field("voltage_alarm_active") then
+      device:emit_event(capabilities.alarm.alarm.off())
+    end
     device:set_field("voltage_alarm_active", false)
+    if device.preferences.voltageAlarmEnabled == false and device.preferences.voltageAutoOffEnabled == false then
+      device:set_field("voltage_average", nil)
+    end
     emit_fallbacks(device)
   end
   if args.old_st_store.preferences.voltageAutoOffEnabled ~= device.preferences.voltageAutoOffEnabled then
     cancel_auto_off(device)
+    if device.preferences.voltageAlarmEnabled == false and device.preferences.voltageAutoOffEnabled == false then
+      device:set_field("voltage_average", nil)
+    end
+  end
+  if args.old_st_store.preferences.masterSwitchControlsAll ~= device.preferences.masterSwitchControlsAll then
+    device:set_field(STRIP_STATE_FIELD, {})
+    if master_controls_all(device) then
+      request_strip_switch_states(device)
+    else
+      device:send(OnOff.attributes.OnOff:read(device):to_endpoint(1))
+    end
   end
 end
 
@@ -466,6 +691,10 @@ local tuya_plug = {
   },
   health_check = false,
   capability_handlers = {
+    [capabilities.switch.ID] = {
+      [capabilities.switch.commands.on.NAME] = switch_on,
+      [capabilities.switch.commands.off.NAME] = switch_off,
+    },
     [capabilities.alarm.ID] = {
       [capabilities.alarm.commands.off.NAME] = function(driver, device)
         device:emit_event(capabilities.alarm.alarm.off())

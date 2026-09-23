@@ -1,4 +1,9 @@
 zigbeeManufacturer:
+  - id: "_TZ3000_bppxj3sf/TS011F"
+    deviceLabel: "Tuya 4 Socket + USB Plug"
+    manufacturer: _TZ3000_bppxj3sf
+    model: TS011F
+    deviceProfileName: tuya-4socket-usb
   - id: "TUYA/TS011F"
     deviceLabel: "Tuya Plug"
     model: TS011F
