@@ -33,6 +33,11 @@ local STRIP_MODEL = "TS011F"
 local STRIP_STATE_FIELD = "tuya_4socket_usb_endpoint_states"
 local STRIP_ENDPOINTS = {1, 2, 3, 4, 5}
 local STRIP_CHILD_ENDPOINTS = {2, 3, 4, 5}
+local STRIP_ON_TIMER_FIELD = "tuya_4socket_usb_pending_on_timer"
+local STRIP_ON_GENERATION_FIELD = "tuya_4socket_usb_on_generation"
+local STRIP_ON_ACTIVE_FIELD = "tuya_4socket_usb_on_active"
+local STRIP_ON_SKIP_ENDPOINTS_FIELD = "tuya_4socket_usb_on_skip_endpoints"
+local STRIP_ON_INTERVAL_SECONDS = 0.5
 
 local POWER_POLLING_TIMER = "tuya_plug_power_polling_timer"
 local ENERGY_POLLING_TIMER = "tuya_plug_energy_polling_timer"
@@ -137,22 +142,60 @@ local function request_strip_switch_states(device)
   end
 end
 
-local function send_switch_command(device, is_on, force_all_endpoints)
-  local parent = parent_device(device)
-  if parent == nil then return end
-  local command = is_on and OnOff.server.commands.On(parent) or OnOff.server.commands.Off(parent)
-  if is_child_device(device) then
-    local child_key = device.parent_assigned_child_key
-    local endpoint = type(child_key) == "string" and tonumber(child_key, 16) or tonumber(child_key)
-    endpoint = endpoint or device:get_endpoint()
-    if endpoint and endpoint >= 2 and endpoint <= 5 then
-      parent:send(command:to_endpoint(endpoint))
+local function cancel_pending_strip_on(device)
+  local timer = device:get_field(STRIP_ON_TIMER_FIELD)
+  if timer then
+    device.thread:cancel_timer(timer)
+    device:set_field(STRIP_ON_TIMER_FIELD, nil)
+  end
+  local generation = (device:get_field(STRIP_ON_GENERATION_FIELD) or 0) + 1
+  device:set_field(STRIP_ON_GENERATION_FIELD, generation)
+  device:set_field(STRIP_ON_ACTIVE_FIELD, false)
+  device:set_field(STRIP_ON_SKIP_ENDPOINTS_FIELD, nil)
+  return generation
+end
+
+local function child_endpoint_id(device)
+  local child_key = device.parent_assigned_child_key
+  local endpoint = type(child_key) == "string" and tonumber(child_key, 16) or tonumber(child_key)
+  return endpoint or tonumber(device:get_endpoint())
+end
+
+local function skip_pending_child_on(parent, endpoint)
+  if endpoint == nil or not parent:get_field(STRIP_ON_ACTIVE_FIELD) then return end
+  local skipped = parent:get_field(STRIP_ON_SKIP_ENDPOINTS_FIELD) or {}
+  skipped[endpoint] = true
+  parent:set_field(STRIP_ON_SKIP_ENDPOINTS_FIELD, skipped)
+end
+
+local function schedule_strip_on_endpoint(device, index, generation)
+  local endpoint = STRIP_CHILD_ENDPOINTS[index]
+  if endpoint == nil then
+    if device:get_field(STRIP_ON_GENERATION_FIELD) == generation then
+      device:set_field(STRIP_ON_ACTIVE_FIELD, false)
+      device:set_field(STRIP_ON_SKIP_ENDPOINTS_FIELD, nil)
+      device:set_field(STRIP_ON_TIMER_FIELD, nil)
     end
     return
   end
-  local endpoints = (force_all_endpoints or master_controls_all(parent)) and STRIP_ENDPOINTS or {1}
-  for _, endpoint in ipairs(endpoints) do
-    parent:send(command:to_endpoint(endpoint))
+  local timer = device.thread:call_with_delay(STRIP_ON_INTERVAL_SECONDS, function()
+    if device:get_field(STRIP_ON_GENERATION_FIELD) ~= generation then return end
+    device:set_field(STRIP_ON_TIMER_FIELD, nil)
+    local skipped = device:get_field(STRIP_ON_SKIP_ENDPOINTS_FIELD) or {}
+    if not skipped[endpoint] then
+      device:send(OnOff.server.commands.On(device):to_endpoint(endpoint))
+    end
+    schedule_strip_on_endpoint(device, index + 1, generation)
+  end)
+  device:set_field(STRIP_ON_TIMER_FIELD, timer)
+end
+
+local function send_strip_off_to_all(device)
+  local parent = parent_device(device)
+  if parent == nil then return end
+  cancel_pending_strip_on(parent)
+  for _, endpoint in ipairs(STRIP_ENDPOINTS) do
+    parent:send(OnOff.server.commands.Off(parent):to_endpoint(endpoint))
   end
 end
 
@@ -226,7 +269,7 @@ local function switch_off_for_voltage(device)
   device:emit_event(capabilities.alarm.alarm.off())
   device:emit_event(capabilities.alarm.alarm.siren())
   if is_four_socket_usb(device) then
-    send_switch_command(device, false, true)
+    send_strip_off_to_all(device)
   else
     device:send(OnOff.server.commands.Off(device))
   end
@@ -294,9 +337,10 @@ local function evaluate_voltage_alarm(device, voltage)
   evaluate_voltage_auto_off(device, voltage, average)
 end
 
-local function emit_fallbacks(device)
+local function emit_fallbacks(device, skip_voltage_event)
   local voltage = effective_voltage(device)
-  if device.preferences.voltageMode == "fixed" or not device:get_field("voltage_seen") or (device:get_field("last_voltage") or 0) < 100 then
+  local low_voltage_fallback = not is_four_socket_usb(device) and (device:get_field("last_voltage") or 0) < 100
+  if not skip_voltage_event and (device.preferences.voltageMode == "fixed" or not device:get_field("voltage_seen") or low_voltage_fallback) then
     device:emit_event(capabilities.voltageMeasurement.voltage({value = voltage, unit = "V"}))
   end
   local power = device:get_field("last_power")
@@ -321,9 +365,17 @@ local function voltage_handler(driver, device, value)
   if device.preferences.voltageMode ~= "fixed" and value.value >= 100 and voltage < 100 then
     voltage = value.value * (device:get_field("voltage_multiplier") or 1)
   end
+  if is_four_socket_usb(device) and voltage <= 0 then
+    cancel_auto_off(device)
+    device:emit_event(capabilities.voltageMeasurement.voltage({value = effective_voltage(device), unit = "V"}))
+    emit_fallbacks(device, true)
+    return
+  end
   device:set_field("voltage_seen", true)
   device:set_field("last_voltage", voltage)
-  device:emit_event(capabilities.voltageMeasurement.voltage({value = voltage, unit = "V"}))
+  if device.preferences.voltageMode ~= "fixed" then
+    device:emit_event(capabilities.voltageMeasurement.voltage({value = voltage, unit = "V"}))
+  end
   evaluate_voltage_alarm(device, voltage)
   emit_fallbacks(device)
 end
@@ -490,6 +542,13 @@ local function on_off_attr_handler(driver, device, value, zb_rx)
     if endpoint >= 1 and endpoint <= 5 then
       local is_on = value.value == true or value.value == 1
       local states = device:get_field(STRIP_STATE_FIELD) or {}
+      if states[endpoint] == true and not is_on and device:get_field(STRIP_ON_ACTIVE_FIELD) then
+        if endpoint == 1 then
+          cancel_pending_strip_on(device)
+        else
+          skip_pending_child_on(device, endpoint)
+        end
+      end
       states[endpoint] = is_on
       device:set_field(STRIP_STATE_FIELD, states)
       if endpoint ~= 1 or not master_controls_all(device) then
@@ -514,18 +573,43 @@ end
 
 local function switch_on(driver, device, command)
   if is_four_socket_usb(device) then
-    send_switch_command(device, true)
-  else
-    switch_defaults.on(driver, device, command)
+    local parent = parent_device(device)
+    if parent == nil then return end
+    if is_child_device(device) then
+      skip_pending_child_on(parent, child_endpoint_id(device))
+      switch_defaults.on(driver, device, command)
+    elseif master_controls_all(device) then
+      if parent:get_field(STRIP_ON_ACTIVE_FIELD) then return end
+      local generation = cancel_pending_strip_on(parent)
+      parent:set_field(STRIP_ON_ACTIVE_FIELD, true)
+      parent:set_field(STRIP_ON_SKIP_ENDPOINTS_FIELD, {})
+      switch_defaults.on(driver, device, command)
+      schedule_strip_on_endpoint(parent, 1, generation)
+    else
+      cancel_pending_strip_on(parent)
+      switch_defaults.on(driver, device, command)
+    end
+    return
   end
+  switch_defaults.on(driver, device, command)
 end
 
 local function switch_off(driver, device, command)
   if is_four_socket_usb(device) then
-    send_switch_command(device, false)
-  else
-    switch_defaults.off(driver, device, command)
+    local parent = parent_device(device)
+    if parent == nil then return end
+    if is_child_device(device) then
+      skip_pending_child_on(parent, child_endpoint_id(device))
+      switch_defaults.off(driver, device, command)
+    elseif master_controls_all(device) then
+      send_strip_off_to_all(parent)
+    else
+      cancel_pending_strip_on(parent)
+      switch_defaults.off(driver, device, command)
+    end
+    return
   end
+  switch_defaults.off(driver, device, command)
 end
 
 ---------------------------------------------------------------------
@@ -595,6 +679,9 @@ end
 local function device_info_changed(driver, device, event, args)
   log.debug("** device_info_changed()")
   if is_child_device(device) then return end
+  if is_four_socket_usb(device) then
+    cancel_pending_strip_on(device)
+  end
   if args.old_st_store.preferences.powerPolling ~= device.preferences.powerPolling then
     setup_power_polling(device)
   end
